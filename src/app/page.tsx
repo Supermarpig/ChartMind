@@ -127,21 +127,25 @@ export default function Home() {
         </p>
       </div>
 
-      <div className="grid gap-8 md:grid-cols-2">
-        <div className="space-y-4">
-          <ImageUploader
-            onImageUpload={handleImageUpload}
-            acceptedFileTypes={['image/jpeg', 'image/png']}
-            maxFileSize={5 * 1024 * 1024}
-          />
-          {state.originalImage && (
-            <ImagePreview
-              imageUrl={state.originalImage.url}
-              alt="原始圖片"
-            />
-          )}
-        </div>
-        <div className="space-y-4">
+      <div className="flex flex-col md:flex-row gap-8">
+        <div className="flex-1 space-y-4">
+          <div className="flex gap-8">
+            <div className="flex-1">
+              <ImageUploader
+                onImageUpload={handleImageUpload}
+                acceptedFileTypes={['image/jpeg', 'image/png']}
+                maxFileSize={5 * 1024 * 1024}
+              />
+            </div>
+            {state.originalImage && (
+              <div className="flex-1">
+                <ImagePreview
+                  imageUrl={state.originalImage.url}
+                  alt="原始圖片"
+                />
+              </div>
+            )}
+          </div>
           {state.chartData && (
             <DataPreview
               data={state.chartData}
@@ -149,7 +153,6 @@ export default function Home() {
             />
           )}
         </div>
-
       </div>
 
       <Toaster />

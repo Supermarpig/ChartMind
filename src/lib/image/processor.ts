@@ -170,39 +170,58 @@ export class ImageProcessor {
     );
 
     const points: Point[] = [];
+    let bestContour: CVMat | null = null;
     let maxArea = 0;
-    let maxContourIdx = -1;
 
-    // 找出最大的非矩形輪廓（可能是曲線）
+    // 找出最可能是曲線的輪廓
     for (let i = 0; i < contours.size(); i++) {
       const contour = contours.get(i);
       const area = window.cv.contourArea(contour);
-      const perimeter = window.cv.arcLength(contour, true);
+      const perimeter = window.cv.arcLength(contour, false);
       
-      // 計算形狀因子（圓形度）
-      const circularity = 4 * Math.PI * area / (perimeter * perimeter);
-      
-      // 排除接近矩形的輪廓（可能是圖表邊框）
-      if (area > maxArea && circularity < 0.8) {
+      // 使用更嚴格的形狀過濾
+      // 1. 面積要在合理範圍內
+      // 2. 周長與面積比要合理（避免雜訊）
+      // 3. 選擇最大的合格輪廓
+      if (area > 100 && 
+          area < src.rows * src.cols * 0.3 && 
+          perimeter / area < 1 &&
+          area > maxArea) {
+        if (bestContour) {
+          bestContour.delete();
+        }
+        bestContour = contour;
         maxArea = area;
-        maxContourIdx = i;
+      } else {
+        contour.delete();
       }
     }
 
     // 提取曲線點
-    if (maxContourIdx !== -1) {
-      const contour = contours.get(maxContourIdx);
-      const step = Math.max(1, Math.floor(contour.data32S.length / (2 * this.options.sampleRate)));
+    if (bestContour) {
+      // 採樣點
+      const totalPoints = 100; // 增加採樣點數
+      const step = Math.max(1, Math.floor(bestContour.data32S.length / (2 * totalPoints)));
       
-      for (let i = 0; i < contour.data32S.length; i += step * 2) {
+      for (let i = 0; i < bestContour.data32S.length; i += step * 2) {
         points.push({
-          x: contour.data32S[i],
-          y: contour.data32S[i + 1]
+          x: bestContour.data32S[i],
+          y: bestContour.data32S[i + 1]
         });
       }
 
-      // 按 x 座標排序
+      // 按 x 座標排序並移除重複點
       points.sort((a, b) => a.x - b.x);
+      const filteredPoints = points.filter((point, index, self) =>
+        index === 0 || point.x !== self[index - 1].x
+      );
+
+      bestContour.delete();
+      processed.delete();
+      contours.delete();
+      hierarchy.delete();
+
+      return filteredPoints;
     }
 
     processed.delete();
@@ -217,45 +236,48 @@ export class ImageProcessor {
    */
   public async processImage(imageUrl: string): Promise<ProcessedImage> {
     try {
-      // 等待 OpenCV 載入
       await this.waitForOpenCV();
-      
-      // 載入圖片
       await this.loadImage(imageUrl);
-
-      // 將 Canvas 圖像轉換為 OpenCV 格式
       const src = window.cv.imread(this.canvas);
-      
-      // 檢測座標軸
       const { x: xAxisPoints, y: yAxisPoints } = this.detectAxes(src);
-      
-      // 檢測曲線
       const curvePoints = this.detectCurve(src);
-
-      // 清理記憶體
       src.delete();
 
-      // 計算座標軸範圍
+      // 計算實際的圖表範圍
+      const xMin = Math.min(...xAxisPoints.map(p => p.x));
+      const xMax = Math.max(...xAxisPoints.map(p => p.x));
+      const yMin = Math.min(...yAxisPoints.map(p => p.y));
+      const yMax = Math.max(...yAxisPoints.map(p => p.y));
+
+      // 計算比例尺（根據實際圖表刻度）
       const xAxis = {
-        min: Math.min(...xAxisPoints.map(p => p.x)),
-        max: Math.max(...xAxisPoints.map(p => p.x)),
-        scale: 1
+        min: 0,
+        max: 1.4, // m³/min 的最大值
+        scale: 1.4 / (xMax - xMin)
       };
 
       const yAxis = {
-        min: Math.min(...yAxisPoints.map(p => p.y)),
-        max: Math.max(...yAxisPoints.map(p => p.y)),
-        scale: 1
+        min: 0,
+        max: 8.0, // mmH₂O 的最大值
+        scale: 8.0 / (yMax - yMin)
       };
 
-      // 返回處理結果
+      // 轉換座標（考慮圖表方向和原點位置）
+      const transformedPoints = curvePoints
+        .map(point => ({
+          x: Math.max(0, Math.min(1.4, (point.x - xMin) * xAxis.scale)),
+          y: Math.max(0, Math.min(8.0, 8.0 - ((point.y - yMin) * yAxis.scale)))
+        }))
+        .filter(point => point.x >= 0 && point.x <= 1.4 && point.y >= 0 && point.y <= 8.0)
+        .sort((a, b) => a.x - b.x);
+
       return {
         edges: this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height),
         axes: {
           x: xAxis,
           y: yAxis
         },
-        curves: curvePoints
+        curves: transformedPoints
       };
     } catch (error) {
       console.error('圖片處理錯誤:', error);

@@ -51,7 +51,15 @@ export class ExcelProcessor {
   /**
    * 下載 Excel 檔案
    */
-  public static downloadExcel(data: ChartData, filename: string = 'chart_data.xlsx') {
+  public static downloadExcel(data: ChartData, filename?: string) {
+    // 如果沒有指定檔名，使用預設檔名（包含日期時間）
+    if (!filename) {
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('zh-TW').replace(/\//g, '');
+      const timeStr = now.toLocaleTimeString('zh-TW', { hour12: false }).replace(/:/g, '');
+      filename = `chart_${dateStr}_${timeStr}.xlsx`;
+    }
+
     // 生成 Excel 檔案
     const excelData = this.generateExcel(data);
 
