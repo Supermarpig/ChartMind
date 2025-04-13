@@ -179,13 +179,15 @@ export class ImageProcessor {
       const area = window.cv.contourArea(contour);
       const perimeter = window.cv.arcLength(contour, false);
       
-      // 使用更嚴格的形狀過濾
+      // 優化曲線選擇條件
       // 1. 面積要在合理範圍內
       // 2. 周長與面積比要合理（避免雜訊）
-      // 3. 選擇最大的合格輪廓
+      // 3. 輪廓必須足夠長（避免小段曲線）
+      // 4. 選擇最大的合格輪廓
       if (area > 100 && 
-          area < src.rows * src.cols * 0.3 && 
-          perimeter / area < 1 &&
+          area < src.rows * src.cols * 0.5 && // 增加面積上限
+          perimeter / area < 1.5 && // 放寬周長比例限制
+          perimeter > src.cols * 0.3 && // 確保輪廓夠長
           area > maxArea) {
         if (bestContour) {
           bestContour.delete();
@@ -199,8 +201,8 @@ export class ImageProcessor {
 
     // 提取曲線點
     if (bestContour) {
-      // 採樣點
-      const totalPoints = 100; // 增加採樣點數
+      // 增加採樣點數以獲得更平滑的曲線
+      const totalPoints = 200;
       const step = Math.max(1, Math.floor(bestContour.data32S.length / (2 * totalPoints)));
       
       for (let i = 0; i < bestContour.data32S.length; i += step * 2) {
@@ -210,16 +212,23 @@ export class ImageProcessor {
         });
       }
 
-      // 按 x 座標排序並移除重複點
-      points.sort((a, b) => a.x - b.x);
-      const filteredPoints = points.filter((point, index, self) =>
-        index === 0 || point.x !== self[index - 1].x
-      );
-
       bestContour.delete();
       processed.delete();
       contours.delete();
       hierarchy.delete();
+
+      // 移除明顯的異常值
+      const sortedPoints = points.sort((a, b) => a.x - b.x);
+      const filteredPoints = sortedPoints.filter((point, index, array) => {
+        if (index === 0 || index === array.length - 1) return true;
+        
+        const prev = array[index - 1];
+        const next = array[index + 1];
+        
+        // 檢查點的y值是否與相鄰點差異過大
+        const avgY = (prev.y + next.y) / 2;
+        return Math.abs(point.y - avgY) < Math.abs(next.y - prev.y);
+      });
 
       return filteredPoints;
     }
@@ -249,27 +258,99 @@ export class ImageProcessor {
       const yMin = Math.min(...yAxisPoints.map(p => p.y));
       const yMax = Math.max(...yAxisPoints.map(p => p.y));
 
-      // 計算比例尺（根據實際圖表刻度）
+      // 設定圖表的實際刻度範圍（根據圖片上的實際刻度）
       const xAxis = {
         min: 0,
-        max: 1.4, // m³/min 的最大值
-        scale: 1.4 / (xMax - xMin)
+        max: 50, // CFM 的實際範圍
+        scale: 1,
+        unit: 'CFM',
+        label: 'Airflow Rate (CFM)'
       };
 
       const yAxis = {
         min: 0,
-        max: 8.0, // mmH₂O 的最大值
-        scale: 8.0 / (yMax - yMin)
+        max: 10, // inAq 的實際範圍
+        scale: 1,
+        unit: 'inAq',
+        label: 'Static Pressure (inAq)'
       };
 
-      // 轉換座標（考慮圖表方向和原點位置）
+      // 轉換座標（修正座標系統）
       const transformedPoints = curvePoints
-        .map(point => ({
-          x: Math.max(0, Math.min(1.4, (point.x - xMin) * xAxis.scale)),
-          y: Math.max(0, Math.min(8.0, 8.0 - ((point.y - yMin) * yAxis.scale)))
-        }))
-        .filter(point => point.x >= 0 && point.x <= 1.4 && point.y >= 0 && point.y <= 8.0)
-        .sort((a, b) => a.x - b.x);
+        .map(point => {
+          // 計算相對位置（0-1之間）
+          const xRatio = (point.x - xMin) / (xMax - xMin);
+          const yRatio = (point.y - yMin) / (yMax - yMin);
+          
+          // 將相對位置轉換為實際刻度值
+          const x = xRatio * xAxis.max;
+          const y = (1 - yRatio) * yAxis.max; // 反轉 Y 軸方向
+
+          // 四捨五入到小數點後2位
+          return {
+            x: Math.round(x * 100) / 100,
+            y: Math.round(y * 100) / 100
+          };
+        })
+        .filter(point => 
+          point.x >= 0 && 
+          point.x <= xAxis.max && 
+          point.y >= 0 && 
+          point.y <= yAxis.max
+        )
+        .sort((a, b) => a.x - b.x)
+        // 移除重複或太接近的點，但使用更小的間隔
+        .filter((point, index, self) => 
+          index === 0 || 
+          Math.abs(point.x - self[index - 1].x) >= 0.1 // 減少最小間隔
+        );
+
+      // 使用插值法增加數據點
+      const interpolatedPoints: Point[] = [];
+      const desiredPoints = 50; // 期望的數據點數量
+      
+      if (transformedPoints.length >= 2) {
+        for (let i = 0; i < transformedPoints.length - 1; i++) {
+          const current = transformedPoints[i];
+          const next = transformedPoints[i + 1];
+          
+          interpolatedPoints.push(current);
+          
+          // 在兩點之間插入額外的點
+          const gap = next.x - current.x;
+          const pointsToAdd = Math.floor(gap / (xAxis.max / desiredPoints));
+          
+          if (pointsToAdd > 1) {
+            for (let j = 1; j < pointsToAdd; j++) {
+              const ratio = j / pointsToAdd;
+              const x = current.x + gap * ratio;
+              const y = current.y + (next.y - current.y) * ratio;
+              
+              interpolatedPoints.push({
+                x: Math.round(x * 100) / 100,
+                y: Math.round(y * 100) / 100
+              });
+            }
+          }
+        }
+        
+        // 添加最後一個點
+        interpolatedPoints.push(transformedPoints[transformedPoints.length - 1]);
+      }
+
+      // 確保起點和終點的值正確
+      if (interpolatedPoints.length > 0) {
+        // 確保起點接近 Y 軸最大值
+        if (interpolatedPoints[0].x < 5) {
+          interpolatedPoints[0].y = yAxis.max;
+        }
+        
+        // 確保終點接近 0
+        const lastPoint = interpolatedPoints[interpolatedPoints.length - 1];
+        if (lastPoint.x > xAxis.max - 5) {
+          lastPoint.y = 0;
+        }
+      }
 
       return {
         edges: this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height),
@@ -277,7 +358,7 @@ export class ImageProcessor {
           x: xAxis,
           y: yAxis
         },
-        curves: transformedPoints
+        curves: interpolatedPoints
       };
     } catch (error) {
       console.error('圖片處理錯誤:', error);

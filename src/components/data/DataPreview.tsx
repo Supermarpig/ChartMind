@@ -18,7 +18,17 @@ interface DataPreviewProps {
 }
 
 export const DataPreview = ({ data, onDownload }: DataPreviewProps) => {
-  const previewData = ExcelProcessor.generatePreview(data);
+  // 格式化數字為兩位小數
+  const formatNumber = (num: number) => num.toFixed(10);
+  
+  // 生成預覽數據
+  const previewData = [
+    ['X', 'Y'],
+    ...data.points.slice(0, 10).map(point => [
+      formatNumber(point.x),
+      formatNumber(point.y)
+    ])
+  ];
 
   const handleDownload = () => {
     ExcelProcessor.downloadExcel(data);
@@ -56,7 +66,7 @@ export const DataPreview = ({ data, onDownload }: DataPreviewProps) => {
       </div>
       
       <p className="text-sm text-gray-500">
-        顯示前 5 筆數據，完整數據請下載 Excel 檔案查看
+        顯示前 10 筆數據，完整數據請下載 Excel 檔案查看
       </p>
     </div>
   );

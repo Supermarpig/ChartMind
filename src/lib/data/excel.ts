@@ -16,8 +16,11 @@ export class ExcelProcessor {
       ['X', 'Y']
     ];
 
-    // 轉換數據點
-    const rows = data.points.map(point => [point.x, point.y]);
+    // 轉換數據點（確保只有兩位小數）
+    const rows = data.points.map(point => [
+      Math.round(point.x * 100) / 100,
+      Math.round(point.y * 100) / 100
+    ]);
 
     // 合併所有數據
     const wsData = [...headers, ...rows];
@@ -40,6 +43,19 @@ export class ExcelProcessor {
     
     // 創建工作表
     const ws = this.convertToWorksheet(data);
+    
+    // 設置數字格式（限制小數點後兩位）
+    const range = utils.decode_range(ws['!ref'] || 'A1');
+    for (let R = 4; R <= range.e.r; R++) { // 從第4行開始（跳過標題）
+      for (let C = 0; C <= range.e.c; C++) {
+        const cell_address = utils.encode_cell({r: R, c: C});
+        const cell = ws[cell_address];
+        if (cell && typeof cell.v === 'number') {
+          cell.z = '0.00'; // 設置為保留兩位小數的格式
+          cell.v = Math.round(cell.v * 100) / 100; // 四捨五入到兩位小數
+        }
+      }
+    }
     
     // 將工作表添加到工作簿
     utils.book_append_sheet(wb, ws, '圖表數據');
@@ -88,7 +104,7 @@ export class ExcelProcessor {
    */
   public static generatePreview(data: ChartData): string[][] {
     const headers = [['X', 'Y']];
-    const rows = data.points.slice(0, 5).map(point => [
+    const rows = data.points.slice(0, 10).map(point => [
       point.x.toFixed(2),
       point.y.toFixed(2)
     ]);

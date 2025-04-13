@@ -7,13 +7,22 @@ export interface Axis {
   min: number;
   max: number;
   scale: number;
-  unit?: string;
+  unit: string;
+  label: string;
+  gridLines?: number[];    // 網格線位置
+  isYAxis?: boolean;
+  format?: (value: number) => string;  // 數值格式化函數
 }
 
 export interface ChartData {
   xAxis: Axis;
   yAxis: Axis;
   points: Point[];
+  series?: {              // 支援多條曲線
+    name: string;
+    points: Point[];
+    color?: string;
+  }[];
 }
 
 export interface ProcessedImage {
